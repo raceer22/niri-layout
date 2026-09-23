@@ -7,7 +7,7 @@ from pathlib import Path
 from . import NiriLayoutError
 from .export import write_export_script
 from .ipc import query_niri
-from .restore import build_restore_plan, load_layout
+from .restore import build_restore_plan, load_layout, restore_layout
 from .snapshot import normalize_snapshot
 from .storage import save_layout, validate_layout_name
 
@@ -69,6 +69,9 @@ def main(argv=None, env=None):
         if args.plan:
             print(json.dumps(plan, separators=(", ", ": "), sort_keys=True))
             return 0
+
+        result = restore_layout(snapshot, current_outputs)
+        print(json.dumps(result, separators=(", ", ": "), sort_keys=True))
         return 0
 
     if args.command == "export":

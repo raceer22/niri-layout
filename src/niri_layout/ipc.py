@@ -39,11 +39,48 @@ def niri_action(action: str | Sequence[str]) -> list[str]:
     return ["niri", "msg", "action", *tokens]
 
 
+class _EventStreamReader:
+    def __init__(self, process):
+        self._process = process
+        self.cmd = list(getattr(process, "cmd", []))
+        self.stdout = getattr(process, "stdout", None)
+        self.stderr = getattr(process, "stderr", None)
+
+    def readline(self):
+        if self.stdout is None:
+            return ""
+        return self.stdout.readline()
+
+    def close(self):
+        if self.stdout is not None:
+            try:
+                self.stdout.close()
+            except Exception:
+                pass
+        if self.stderr is not None:
+            try:
+                self.stderr.close()
+            except Exception:
+                pass
+
+    def terminate(self):
+        try:
+            self._process.terminate()
+        except Exception:
+            pass
+
+    def kill(self):
+        try:
+            self._process.kill()
+        except Exception:
+            pass
+
+
 def start_event_stream(*, runner=subprocess.Popen, command: Sequence[str] | None = None):
     cmd = list(command or ["niri", "msg", "--json", "event-stream"])
     process = runner(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     process.cmd = cmd
-    return process
+    return _EventStreamReader(process)
 
 
 def close_event_stream(process) -> bool:

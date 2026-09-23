@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .desktop import resolve_desktop_entry
 from .ipc import close_event_stream, niri_action, start_event_stream
 from .launcher import launch_process
 from .matching import match_output
@@ -60,6 +61,35 @@ def build_restore_plan(snapshot: Mapping[str, Any], current_outputs: Mapping[str
             "workspace_order": workspace_order,
         })
     return plan
+
+
+def _resolve_window_command(window: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(window, Mapping):
+        raise ValueError("window must be a mapping")
+
+    candidate = dict(window)
+    app_id = candidate.get("app_id")
+    if app_id is None:
+        raise ValueError("window is missing its app_id")
+
+    command = candidate.get("command")
+    if command not in (None, "", [], ()):
+        return candidate
+
+    resolution = resolve_desktop_entry(
+        str(app_id),
+        user_dirs=[Path.home() / ".local" / "share" / "applications"],
+        system_dirs=[Path("/usr/share/applications")],
+    )
+    if resolution.resolved and resolution.command:
+        candidate["command"] = list(resolution.command)
+        if resolution.desktop_id is not None:
+            candidate["desktop_id"] = resolution.desktop_id
+        return candidate
+
+    if command is None and app_id is not None:
+        warnings.warn(f"could not resolve command for app_id {app_id!r}; restore will continue and may fail later")
+    return candidate
 
 
 def _consume_matching_event(
@@ -138,8 +168,7 @@ def restore_single_window(
     event_stream=None,
     timeout: float = 5.0,
 ):
-    if not isinstance(window, Mapping):
-        raise ValueError("window must be a mapping")
+    window = _resolve_window_command(window)
 
     app_id = window.get("app_id")
     command = window.get("command")
@@ -209,8 +238,7 @@ def restore_windows(
 
     try:
         for order_index, window in enumerate(windows):
-            if not isinstance(window, Mapping):
-                raise ValueError("window must be a mapping")
+            window = _resolve_window_command(window)
             app_id = window.get("app_id")
             command = window.get("command")
             if app_id is None:
