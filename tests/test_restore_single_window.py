@@ -116,8 +116,17 @@ class RestoreSingleWindowTests(unittest.TestCase):
         action = niri_action("new-workspace --output DP-2")
         self.assertEqual(action, ["niri", "msg", "action", "new-workspace", "--output", "DP-2"])
 
-        started = start_event_stream(runner=lambda cmd, **kwargs: SimpleNamespace(cmd=cmd, **kwargs))
+        fake_process = SimpleNamespace(
+            cmd=["niri", "msg", "--json", "event-stream"],
+            stdout=io.StringIO('{"kind": "WindowOpenedOrChanged", "app_id": "Alacritty", "id": 7}\n'),
+            stderr=io.StringIO(),
+            terminate=lambda: None,
+            kill=lambda: None,
+            close=lambda: None,
+        )
+        started = start_event_stream(runner=lambda cmd, **kwargs: fake_process)
         self.assertEqual(started.cmd, ["niri", "msg", "--json", "event-stream"])
+        self.assertEqual(started.readline(), '{"kind": "WindowOpenedOrChanged", "app_id": "Alacritty", "id": 7}\n')
 
         closed = close_event_stream(started)
         self.assertTrue(closed)
