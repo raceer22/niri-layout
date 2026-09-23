@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .desktop import resolve_desktop_entry
+from .desktop import default_desktop_dirs, resolve_desktop_entry
 from .ipc import close_event_stream, niri_action, start_event_stream
 from .launcher import launch_process
 from .matching import match_output
@@ -76,11 +76,8 @@ def _resolve_window_command(window: Mapping[str, Any]) -> dict[str, Any]:
     if command not in (None, "", [], ()):
         return candidate
 
-    resolution = resolve_desktop_entry(
-        str(app_id),
-        user_dirs=[Path.home() / ".local" / "share" / "applications"],
-        system_dirs=[Path("/usr/share/applications")],
-    )
+    user_dirs, system_dirs = default_desktop_dirs()
+    resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
     if resolution.resolved and resolution.command:
         candidate["command"] = list(resolution.command)
         if resolution.desktop_id is not None:

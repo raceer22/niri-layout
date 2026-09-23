@@ -36,6 +36,20 @@ def _coerce_dirs(values: Sequence[str | Path] | None) -> list[Path]:
     return [Path(value).expanduser() for value in values]
 
 
+def default_desktop_dirs(home_dir: str | Path | None = None) -> tuple[list[Path], list[Path]]:
+    home = Path(home_dir).expanduser() if home_dir is not None else Path.home()
+    return (
+        [
+            home / ".local" / "share" / "applications",
+            home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+        ],
+        [
+            Path("/usr/share/applications"),
+            Path("/var/lib/flatpak/exports/share/applications"),
+        ],
+    )
+
+
 def _clean_exec(exec_value: str) -> str:
     return PLACEHOLDER_RE.sub("", exec_value).strip()
 
@@ -61,14 +75,15 @@ def _parse_exec(exec_value: str) -> list[str]:
     return cleaned
 
 
-def _read_desktop_entry(path: Path) -> tuple[str | None, str | None]:
+def _read_desktop_entry(path: Path) -> tuple[str | None, str | None, str | None]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None, None
+        return None, None, None
 
     exec_value = None
     startup_wm_class = None
+    flatpak_id = None
     in_desktop_entry = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -81,7 +96,9 @@ def _read_desktop_entry(path: Path) -> tuple[str | None, str | None]:
             exec_value = stripped.split("=", 1)[1]
         elif stripped.startswith("StartupWMClass="):
             startup_wm_class = stripped.split("=", 1)[1]
-    return exec_value, startup_wm_class
+        elif stripped.startswith("X-Flatpak="):
+            flatpak_id = stripped.split("=", 1)[1]
+    return exec_value, startup_wm_class, flatpak_id
 
 
 def resolve_desktop_entry(
@@ -98,7 +115,8 @@ def resolve_desktop_entry(
 
     search_dirs: list[Path] = _coerce_dirs(user_dirs) + _coerce_dirs(system_dirs)
     if not search_dirs:
-        search_dirs = [Path.home() / ".local/share/applications", Path("/usr/share/applications")]
+        default_user_dirs, default_system_dirs = default_desktop_dirs()
+        search_dirs = default_user_dirs + default_system_dirs
 
     candidates: list[Path] = []
     for directory in search_dirs:
@@ -108,7 +126,7 @@ def resolve_desktop_entry(
         for child in Path(directory).glob("*.desktop"):
             if child.name == desktop_id:
                 continue
-            exec_value, startup_wm_class = _read_desktop_entry(child)
+            exec_value, startup_wm_class, _ = _read_desktop_entry(child)
             if exec_value and startup_wm_class and startup_wm_class == normalized:
                 candidates.append(child)
 
@@ -118,7 +136,7 @@ def resolve_desktop_entry(
             continue
         seen.add(desktop_path)
 
-        exec_value, _ = _read_desktop_entry(desktop_path)
+        exec_value, _, flatpak_id = _read_desktop_entry(desktop_path)
         if exec_value is None:
             return DesktopResolution(
                 app_id=normalized,
@@ -127,7 +145,7 @@ def resolve_desktop_entry(
                 warning=f"desktop entry {desktop_path.name!r} is missing an Exec field",
             )
 
-        command = _parse_exec(exec_value)
+        command = ["gtk-launch", desktop_path.stem] if flatpak_id else _parse_exec(exec_value)
         if not command:
             return DesktopResolution(
                 app_id=normalized,

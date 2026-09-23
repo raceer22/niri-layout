@@ -85,6 +85,28 @@ class DesktopResolutionTests(unittest.TestCase):
             self.assertEqual(resolution.desktop_id, "zen-browser.desktop")
             self.assertEqual(resolution.command, ["zen-browser"])
 
+    def test_flatpak_export_desktop_entry_is_resolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            flatpak_dir = Path(tmpdir) / "flatpak" / "exports" / "share" / "applications"
+            flatpak_dir.mkdir(parents=True)
+            (flatpak_dir / "md.obsidian.Obsidian.desktop").write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "X-Flatpak=md.obsidian.Obsidian\n"
+                "Exec=flatpak run md.obsidian.Obsidian %U\n",
+                encoding="utf-8",
+            )
+
+            resolution = resolve_desktop_entry(
+                "md.obsidian.Obsidian",
+                user_dirs=[flatpak_dir],
+                system_dirs=[],
+            )
+
+            self.assertTrue(resolution.resolved)
+            self.assertEqual(resolution.desktop_id, "md.obsidian.Obsidian.desktop")
+            self.assertEqual(resolution.command, ["gtk-launch", "md.obsidian.Obsidian"])
+
     def test_snapshot_attaches_resolved_desktop_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
