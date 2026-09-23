@@ -106,6 +106,28 @@ def _columns(raw_workspace: Mapping[str, Any], raw_windows: Sequence[Mapping[str
     return columns
 
 
+def _focus_from_workspace(raw_workspace: Mapping[str, Any]) -> dict[str, Any] | None:
+    columns = raw_workspace.get("columns", [])
+    if not isinstance(columns, list):
+        return None
+
+    for column_index, raw_column in enumerate(columns):
+        if not isinstance(raw_column, Mapping):
+            continue
+        windows = raw_column.get("windows", [])
+        if not isinstance(windows, list):
+            continue
+        for window_index, raw_window in enumerate(windows):
+            if not isinstance(raw_window, Mapping):
+                continue
+            if raw_window.get("is_focused") is True:
+                return {
+                    "column_index": column_index,
+                    "window_index": window_index,
+                }
+    return None
+
+
 def normalize_snapshot(
     name: str,
     raw_outputs: Mapping[str, Any] | Sequence[Mapping[str, Any]],
@@ -125,6 +147,9 @@ def normalize_snapshot(
     workspace_by_output: dict[str, list[WorkspaceSnapshot]] = {}
     active_outputs: set[str] = set()
     output_connectors = {connector for connector, details in _output_items(raw_outputs) if details.get("is_connected", True)}
+    focus: dict[str, Any] | None = None
+    focused_output_details: Mapping[str, Any] | None = None
+
     for raw_workspace in raw_workspaces:
         if not isinstance(raw_workspace, Mapping):
             raise ValueError("each Niri workspace must be an object")
@@ -144,12 +169,24 @@ def normalize_snapshot(
             window for window in (windows or [])
             if isinstance(window, Mapping) and window.get("workspace_id") == workspace_id
         ]
-        workspace_by_output.setdefault(connector, []).append(
-            WorkspaceSnapshot(
-                name=raw_workspace.get("name"),
-                columns=_columns(raw_workspace, workspace_windows, app_dirs=app_dirs),
-            )
+        workspace_snapshot = WorkspaceSnapshot(
+            name=raw_workspace.get("name"),
+            columns=_columns(raw_workspace, workspace_windows, app_dirs=app_dirs),
         )
+        workspace_by_output.setdefault(connector, []).append(workspace_snapshot)
+
+        if raw_workspace.get("is_focused") is True:
+            focus_target = _focus_from_workspace(raw_workspace)
+            if focus_target is not None:
+                focus = {"column_index": focus_target["column_index"], "window_index": focus_target["window_index"]}
+                focused_output_details = next(
+                    (
+                        details
+                        for connector_name, details in _output_items(raw_outputs)
+                        if connector_name == connector and details.get("is_connected", True)
+                    ),
+                    None,
+                )
 
     outputs = []
     for connector, details in _output_items(raw_outputs):
@@ -163,4 +200,20 @@ def normalize_snapshot(
         }
         outputs.append(OutputSnapshot(identifier, workspace_by_output.get(connector, [])).to_dict())
 
-    return {"name": name, "version": SNAPSHOT_VERSION, "outputs": outputs}
+    snapshot = {"name": name, "version": SNAPSHOT_VERSION, "outputs": outputs}
+    if focus is not None:
+        if focused_output_details is None:
+            output_match = "primary"
+        else:
+            output_match_parts = [
+                str(focused_output_details.get(field))
+                for field in ("make", "model", "serial")
+                if focused_output_details.get(field) not in (None, "")
+            ]
+            output_match = " ".join(output_match_parts) if output_match_parts else "primary"
+        snapshot["focus"] = {
+            "output_match": output_match,
+            "column_index": focus["column_index"],
+            "window_index": focus["window_index"],
+        }
+    return snapshot

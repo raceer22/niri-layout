@@ -93,6 +93,9 @@ def _consume_matching_event(
             time.sleep(0.01)
             continue
 
+        if not isinstance(line, str):
+            continue
+
         payload = line.strip()
         if not payload:
             continue
@@ -101,6 +104,8 @@ def _consume_matching_event(
         except json.JSONDecodeError:
             continue
 
+        if not isinstance(event, Mapping):
+            continue
         if event.get("kind") != "WindowOpenedOrChanged":
             continue
 
@@ -186,6 +191,8 @@ def restore_windows(
     launch_runner=None,
     event_stream=None,
     timeout: float = 5.0,
+    warning_sink=None,
+    column_index: int | None = None,
 ):
     if not isinstance(windows, Sequence) or isinstance(windows, (str, bytes)):
         raise ValueError("windows must be a sequence of mappings")
@@ -201,8 +208,7 @@ def restore_windows(
     results: list[dict[str, Any]] = []
 
     try:
-        action_runner(niri_action(f"new-workspace --output {output_name}"), shell=False)
-        for window in windows:
+        for order_index, window in enumerate(windows):
             if not isinstance(window, Mapping):
                 raise ValueError("window must be a mapping")
             app_id = window.get("app_id")
@@ -213,14 +219,26 @@ def restore_windows(
                 raise ValueError("window is missing its command")
 
             pending_by_app_id[app_id].append({"name": name, "window": dict(window)})
-            launch_proc = launch_runner(command, shell=False)
-            if not hasattr(launch_proc, "pid"):
-                raise RuntimeError("process launcher did not return a process with a pid")
+            try:
+                launch_proc = launch_runner(command, shell=False)
+                if not hasattr(launch_proc, "pid"):
+                    raise RuntimeError("process launcher did not return a process with a pid")
+            except Exception as exc:
+                warning = _warning_record(app_id, output_name, name, column_index, f"launch failed for {app_id!r}", exc=exc)
+                warnings.warn(f"launch failed for app_id {app_id!r} on output {output_name!r}: {exc}")
+                if warning_sink is not None:
+                    warning_sink(warning)
+                results.append({"status": "warning", "window_id": None, "app_id": app_id, "name": name, "output": output_name, "workspace": name, "column_index": column_index, "window_index": order_index})
+                continue
 
             deadline = time.monotonic() + float(timeout)
             while True:
                 matched = _consume_matching_event(stream, deadline, pending_by_app_id, event_buffer)
                 if matched is not None:
+                    matched["output"] = output_name
+                    matched["workspace"] = name
+                    matched["column_index"] = column_index
+                    matched["window_index"] = order_index
                     results.append(matched)
                     break
                 if time.monotonic() >= deadline:
@@ -229,12 +247,30 @@ def restore_windows(
                         pending_by_app_id[app_id].popleft()
                         if not pending_by_app_id[app_id]:
                             del pending_by_app_id[app_id]
-                    results.append({"status": "timeout", "window_id": None, "app_id": app_id, "name": name})
+                    timeout_record = {"status": "timeout", "window_id": None, "app_id": app_id, "name": name, "output": output_name, "workspace": name, "column_index": column_index, "window_index": order_index}
+                    warning = _warning_record(app_id, output_name, name, column_index, f"timed out waiting for app_id {app_id!r}")
+                    if warning_sink is not None:
+                        warning_sink(warning)
+                    results.append(timeout_record)
                     break
                 time.sleep(0.01)
         return results
     finally:
         close_event_stream(stream)
+
+
+def _warning_record(app_id: str | None, output_name: str, workspace_name: str | None, column_index: int | None, message: str, *, exc: Exception | None = None) -> dict[str, Any]:
+    payload = {
+        "status": "warning",
+        "app_id": app_id,
+        "output": output_name,
+        "workspace": workspace_name,
+        "column_index": column_index,
+        "message": message,
+    }
+    if exc is not None:
+        payload["error"] = type(exc).__name__
+    return payload
 
 
 def restore_columns(
@@ -246,6 +282,7 @@ def restore_columns(
     launch_runner=None,
     event_stream=None,
     timeout: float = 5.0,
+    warning_sink=None,
 ):
     if not isinstance(columns, Sequence) or isinstance(columns, (str, bytes)):
         raise ValueError("columns must be a sequence of mappings")
@@ -269,6 +306,81 @@ def restore_columns(
                     launch_runner=launch_runner,
                     event_stream=event_stream,
                     timeout=timeout,
+                    warning_sink=warning_sink,
+                    column_index=index,
                 )
             )
     return results
+
+
+def restore_layout(
+    snapshot: Mapping[str, Any] | str,
+    current_outputs: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    *,
+    action_runner=None,
+    launch_runner=None,
+    event_stream=None,
+    timeout: float = 5.0,
+):
+    if isinstance(snapshot, str):
+        snapshot = load_layout(snapshot)
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("snapshot must be a mapping or layout name")
+
+    action_runner = action_runner or (lambda command, **kwargs: None)
+    launch_runner = launch_runner or launch_process
+    warnings_list: list[dict[str, Any]] = []
+    placements: list[dict[str, Any]] = []
+    focus_target = snapshot.get("focus")
+    focus_target_key = None
+    if isinstance(focus_target, Mapping):
+        focus_target_key = (focus_target.get("column_index"), focus_target.get("window_index"))
+
+    for saved_output in snapshot.get("outputs", []):
+        if not isinstance(saved_output, Mapping):
+            raise ValueError("each saved output must be a mapping")
+        identifier = saved_output.get("identifier", {})
+        if not isinstance(identifier, Mapping):
+            identifier = {}
+        target_output = match_output(identifier, current_outputs)
+        workspaces = saved_output.get("workspaces", [])
+        if not isinstance(workspaces, list):
+            raise ValueError("saved output workspaces must be a list")
+        for workspace in workspaces:
+            if not isinstance(workspace, Mapping):
+                raise ValueError("saved workspace must be a mapping")
+            columns = workspace.get("columns", [])
+            if not isinstance(columns, list):
+                raise ValueError("saved workspace columns must be a list")
+            action_runner(niri_action(f"new-workspace --output {target_output}"), shell=False)
+            placements.extend(
+                restore_columns(
+                    workspace.get("name") or "workspace",
+                    target_output,
+                    columns,
+                    action_runner=action_runner,
+                    launch_runner=launch_runner,
+                    event_stream=event_stream,
+                    timeout=timeout,
+                    warning_sink=lambda record: warnings_list.append(record),
+                )
+            )
+
+    focus_window_id = None
+    if focus_target_key is not None:
+        target_column, target_window = focus_target_key
+        for placement in placements:
+            if placement.get("status") != "ok":
+                continue
+            if placement.get("column_index") == target_column and placement.get("window_index") == target_window:
+                focus_window_id = placement.get("window_id")
+                break
+        if focus_window_id is not None:
+            action_runner(niri_action(f"focus-window --id {focus_window_id}"), shell=False)
+
+    return {
+        "status": "ok",
+        "placements": placements,
+        "warnings": warnings_list,
+        "focus_window_id": focus_window_id,
+    }
