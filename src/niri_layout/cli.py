@@ -5,6 +5,7 @@ import warnings
 from pathlib import Path
 
 from . import NiriLayoutError
+from .export import write_export_script
 from .ipc import query_niri
 from .restore import build_restore_plan, load_layout
 from .snapshot import normalize_snapshot
@@ -22,6 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser = subparsers.add_parser("restore", help="plan a layout restore against active outputs")
     restore_parser.add_argument("name", help="layout name")
     restore_parser.add_argument("--plan", action="store_true", help="print a restore plan without mutating Niri")
+
+    export_parser = subparsers.add_parser("export", help="export a standalone restore launcher")
+    export_parser.add_argument("name", help="layout name")
+    export_parser.add_argument("output_path", help="destination shell script path")
     return parser
 
 
@@ -64,6 +69,11 @@ def main(argv=None, env=None):
         if args.plan:
             print(json.dumps(plan, separators=(", ", ": "), sort_keys=True))
             return 0
+        return 0
+
+    if args.command == "export":
+        validate_layout_name(args.name)
+        write_export_script(args.name, args.output_path, home_dir=home_dir)
         return 0
 
     raise NiriLayoutError(f"unsupported command: {args.command}")
