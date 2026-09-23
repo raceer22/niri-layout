@@ -1,6 +1,8 @@
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
+from .desktop import resolve_desktop_entry
 from .model import ColumnSnapshot, OutputSnapshot, SNAPSHOT_VERSION, WorkspaceSnapshot
 
 
@@ -20,7 +22,42 @@ def _output_items(raw_outputs: Mapping[str, Any] | Sequence[Mapping[str, Any]]) 
     raise ValueError("Niri outputs must be an object or list")
 
 
-def _columns_from_windows(raw_windows: Sequence[Mapping[str, Any]]) -> list[ColumnSnapshot]:
+def _resolve_window_metadata(raw_window: Mapping[str, Any], *, app_dirs: Sequence[str | Path] | None = None) -> dict[str, Any]:
+    app_id = raw_window.get("app_id")
+    if not app_id:
+        return {"app_id": app_id}
+
+    window = {"app_id": app_id}
+    if raw_window.get("desktop_id") is not None:
+        window["desktop_id"] = raw_window["desktop_id"]
+    if raw_window.get("command") is not None:
+        window["command"] = raw_window["command"]
+
+    if app_dirs is None:
+        return window
+
+    user_dirs = []
+    system_dirs = []
+    for directory in app_dirs:
+        path = Path(directory).expanduser()
+        if path.name == "applications":
+            if user_dirs and path == user_dirs[-1]:
+                continue
+        if not user_dirs:
+            user_dirs.append(path)
+        else:
+            system_dirs.append(path)
+
+    resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
+    if resolution.resolved:
+        window["desktop_id"] = resolution.desktop_id
+        window["command"] = resolution.command
+    elif resolution.warning:
+        window["warning"] = resolution.warning
+    return window
+
+
+def _columns_from_windows(raw_windows: Sequence[Mapping[str, Any]], *, app_dirs: Sequence[str | Path] | None = None) -> list[ColumnSnapshot]:
     grouped: dict[int, list[tuple[int, Mapping[str, Any]]]] = {}
     for order, raw_window in enumerate(raw_windows):
         if not isinstance(raw_window, Mapping):
@@ -31,9 +68,7 @@ def _columns_from_windows(raw_windows: Sequence[Mapping[str, Any]]) -> list[Colu
         layout = raw_window.get("layout", {})
         position = layout.get("pos_in_scrolling_layout", [1, order]) if isinstance(layout, Mapping) else [1, order]
         column_index = position[0] if isinstance(position, list) and position and isinstance(position[0], int) else 1
-        window = {"app_id": app_id}
-        if raw_window.get("desktop_id") is not None:
-            window["desktop_id"] = raw_window["desktop_id"]
+        window = _resolve_window_metadata(raw_window, app_dirs=app_dirs)
         grouped.setdefault(column_index, []).append((order, window))
 
     return [
@@ -42,10 +77,10 @@ def _columns_from_windows(raw_windows: Sequence[Mapping[str, Any]]) -> list[Colu
     ]
 
 
-def _columns(raw_workspace: Mapping[str, Any], raw_windows: Sequence[Mapping[str, Any]] | None = None) -> list[ColumnSnapshot]:
+def _columns(raw_workspace: Mapping[str, Any], raw_windows: Sequence[Mapping[str, Any]] | None = None, *, app_dirs: Sequence[str | Path] | None = None) -> list[ColumnSnapshot]:
     raw_columns = raw_workspace.get("columns", [])
     if not raw_columns and raw_windows:
-        return _columns_from_windows(raw_windows)
+        return _columns_from_windows(raw_windows, app_dirs=app_dirs)
     if not isinstance(raw_columns, list):
         raise ValueError("workspace columns must be a list")
 
@@ -65,7 +100,7 @@ def _columns(raw_workspace: Mapping[str, Any], raw_windows: Sequence[Mapping[str
             ColumnSnapshot(
                 mode=str(raw_column.get("mode", "split")),
                 width=dict(width),
-                windows=[dict(window) for window in windows],
+                windows=[_resolve_window_metadata(window, app_dirs=app_dirs) for window in windows],
             )
         )
     return columns
@@ -78,6 +113,7 @@ def normalize_snapshot(
     *,
     all_workspaces: bool = False,
     windows: Sequence[Mapping[str, Any]] | None = None,
+    app_dirs: Sequence[str | Path] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(name, str) or not name:
         raise ValueError("snapshot name must not be empty")
@@ -109,7 +145,10 @@ def normalize_snapshot(
             if isinstance(window, Mapping) and window.get("workspace_id") == workspace_id
         ]
         workspace_by_output.setdefault(connector, []).append(
-            WorkspaceSnapshot(name=raw_workspace.get("name"), columns=_columns(raw_workspace, workspace_windows))
+            WorkspaceSnapshot(
+                name=raw_workspace.get("name"),
+                columns=_columns(raw_workspace, workspace_windows, app_dirs=app_dirs),
+            )
         )
 
     outputs = []

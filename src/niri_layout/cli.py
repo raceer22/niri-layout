@@ -1,5 +1,6 @@
 import argparse
 import os
+import warnings
 from pathlib import Path
 
 from . import NiriLayoutError
@@ -25,6 +26,8 @@ def main(argv=None, env=None):
     if args.command == "save":
         validate_layout_name(args.name)
         home_dir = Path((env or os.environ).get("HOME", str(Path.home())))
+        user_app_dir = home_dir / ".local" / "share" / "applications"
+        system_app_dir = Path("/usr/share/applications")
         outputs = query_niri("outputs")
         workspaces = query_niri("workspaces")
         windows = query_niri("windows")
@@ -34,7 +37,15 @@ def main(argv=None, env=None):
             workspaces,
             all_workspaces=args.all_workspaces,
             windows=windows,
+            app_dirs=[user_app_dir, system_app_dir],
         )
+        for output in payload.get("outputs", []):
+            for workspace in output.get("workspaces", []):
+                for column in workspace.get("columns", []):
+                    for window in column.get("windows", []):
+                        warning = window.get("warning")
+                        if warning:
+                            warnings.warn(f"desktop entry warning for {window.get('app_id')!r}: {warning}")
         save_layout(args.name, payload, home_dir=home_dir)
         return 0
 
