@@ -5,6 +5,7 @@ import warnings
 from pathlib import Path
 
 from . import NiriLayoutError
+from .desktop import default_desktop_dirs
 from .export import write_export_script
 from .ipc import query_niri, run_niri_action
 from .restore import build_restore_plan, load_layout, restore_layout
@@ -37,8 +38,7 @@ def main(argv=None, env=None):
 
     if args.command == "save":
         validate_layout_name(args.name)
-        user_app_dir = home_dir / ".local" / "share" / "applications"
-        system_app_dir = Path("/usr/share/applications")
+        user_app_dirs, system_app_dirs = default_desktop_dirs(home_dir)
         outputs = query_niri("outputs")
         workspaces = query_niri("workspaces")
         windows = query_niri("windows")
@@ -48,7 +48,7 @@ def main(argv=None, env=None):
             workspaces,
             all_workspaces=args.all_workspaces,
             windows=windows,
-            app_dirs=[user_app_dir, system_app_dir],
+            app_dirs=user_app_dirs + system_app_dirs,
         )
         for output in payload.get("outputs", []):
             for workspace in output.get("workspaces", []):
