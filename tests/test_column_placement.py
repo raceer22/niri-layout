@@ -9,8 +9,8 @@ class ColumnPlacementTests(unittest.TestCase):
         self.assertEqual(
             actions,
             [
-                ["niri", "msg", "action", "set-column-width", "--column", "0", "--width", "0.5"],
-                ["niri", "msg", "action", "set-column-mode", "--column", "0", "--mode", "split"],
+                ["niri", "msg", "action", "set-column-width", "50%"],
+                ["niri", "msg", "action", "set-column-display", "normal"],
             ],
         )
 
@@ -19,8 +19,8 @@ class ColumnPlacementTests(unittest.TestCase):
         self.assertEqual(
             actions,
             [
-                ["niri", "msg", "action", "set-column-width", "--column", "2", "--width", "0.75"],
-                ["niri", "msg", "action", "set-column-mode", "--column", "2", "--mode", "tabbed"],
+                ["niri", "msg", "action", "set-column-width", "75%"],
+                ["niri", "msg", "action", "set-column-display", "tabbed"],
             ],
         )
 

@@ -66,6 +66,14 @@ def match_output(saved: Mapping[str, Any] | None, current_outputs: Mapping[str, 
         if target in current:
             if current[target].get("is_connected", True):
                 return target
-            return primary
+
+    if len(match_fields) == 1:
+        field, wanted = next(iter(match_fields.items()))
+        for connector, details in current.items():
+            if not details.get("is_connected", True):
+                continue
+            value = details.get(field)
+            if value is not None and _normalize(value) == _normalize(wanted):
+                return str(connector)
 
     return primary

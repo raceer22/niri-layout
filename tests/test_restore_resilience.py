@@ -1,8 +1,11 @@
 import io
 import json
+import os
+import time
 import unittest
 from types import SimpleNamespace
 
+from niri_layout.ipc import _EventStreamReader
 from niri_layout.restore import restore_layout
 
 
@@ -27,6 +30,40 @@ class FakeStream:
 
 
 class RestoreResilienceTests(unittest.TestCase):
+    def test_restore_times_out_when_live_event_stream_is_silent(self):
+        read_fd, write_fd = os.pipe()
+        stream_file = os.fdopen(read_fd, "r", encoding="utf-8")
+        stream = _EventStreamReader(SimpleNamespace(stdout=stream_file, stderr=None))
+        snapshot = {
+            "name": "demo",
+            "version": 1,
+            "outputs": [{
+                "identifier": {"fallback_connector": "DP-1"},
+                "workspaces": [{
+                    "name": "dev-main",
+                    "columns": [{"windows": [{"app_id": "Alacritty", "command": ["alacritty"]}]}],
+                }],
+            }],
+        }
+        current_outputs = {"DP-1": {"name": "DP-1", "is_connected": True}}
+
+        started = time.monotonic()
+        try:
+            result = restore_layout(
+                snapshot,
+                current_outputs,
+                action_runner=lambda command, **kwargs: None,
+                launch_runner=lambda command, **kwargs: SimpleNamespace(pid=1),
+                event_stream=stream,
+                timeout=0.02,
+            )
+        finally:
+            stream_file.close()
+            os.close(write_fd)
+
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual(result["placements"][0]["status"], "timeout")
+
     def test_restore_continues_after_launch_failure_and_records_warning(self):
         snapshot = {
             "name": "demo",

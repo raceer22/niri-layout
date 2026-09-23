@@ -33,6 +33,20 @@ class MatchingTests(unittest.TestCase):
 
         self.assertEqual(match_output(saved, current_outputs), "HDMI-A-1")
 
+    def test_match_output_uses_single_metadata_field_when_it_uniquely_identifies_a_monitor(self):
+        saved = {
+            "make": "Lenovo Group Limited",
+            "model": None,
+            "serial": None,
+            "fallback_connector": "DP-9",
+        }
+        current_outputs = {
+            "DP-2": {"name": "DP-2", "make": "Dell Inc.", "model": "DELL P2217H", "serial": "RH81R71J17EB", "is_connected": True},
+            "HDMI-A-1": {"name": "HDMI-A-1", "make": "Lenovo Group Limited", "model": "T24i-10", "serial": "VT490816", "is_connected": True},
+        }
+
+        self.assertEqual(match_output(saved, current_outputs), "HDMI-A-1")
+
     def test_missing_saved_output_collapses_to_primary_connected_output(self):
         saved = {
             "make": "Unknown",
