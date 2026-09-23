@@ -39,33 +39,25 @@ def match_output(saved: Mapping[str, Any] | None, current_outputs: Mapping[str, 
     primary = _primary_output(current)
     saved_identifier = {} if saved is None else dict(saved)
 
-    complete_fields = {}
+    match_fields = {}
     for field in ("make", "model", "serial"):
         wanted = saved_identifier.get(field)
         if wanted not in (None, ""):
-            complete_fields[field] = str(wanted)
+            match_fields[field] = str(wanted)
 
-    fallback_connector = saved_identifier.get("fallback_connector") or saved_identifier.get("name") or saved_identifier.get("connector")
-    if len(complete_fields) < 3 and fallback_connector is not None:
-        target = str(fallback_connector)
-        if target in current:
-            if current[target].get("is_connected", True):
-                return target
-            return primary
-
-    if complete_fields:
+    if len(match_fields) >= 2:
         for connector, details in current.items():
             if not details.get("is_connected", True):
                 continue
             matches = 0
             for field in ("make", "model", "serial"):
-                wanted = complete_fields.get(field)
+                wanted = match_fields.get(field)
                 if wanted is None:
                     continue
                 value = details.get(field)
                 if value is not None and _normalize(value) == _normalize(wanted):
                     matches += 1
-            if matches == len(complete_fields):
+            if matches == len(match_fields):
                 return str(connector)
 
     fallback_connector = saved_identifier.get("fallback_connector") or saved_identifier.get("name") or saved_identifier.get("connector")
