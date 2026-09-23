@@ -1,4 +1,5 @@
 import json
+import selectors
 import shlex
 import subprocess
 from collections.abc import Sequence
@@ -39,6 +40,17 @@ def niri_action(action: str | Sequence[str]) -> list[str]:
     return ["niri", "msg", "action", *tokens]
 
 
+def run_niri_action(action: str | Sequence[str], *, runner=subprocess.run, **kwargs):
+    command = niri_action(action) if isinstance(action, str) else [str(part) for part in action]
+    result = runner(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip() or "unknown error"
+        stdout = (result.stdout or "").strip()
+        detail = stdout if stdout else stderr
+        raise NiriIPCError(f"niri action failed: {detail}")
+    return result
+
+
 class _EventStreamReader:
     def __init__(self, process):
         self._process = process
@@ -46,9 +58,19 @@ class _EventStreamReader:
         self.stdout = getattr(process, "stdout", None)
         self.stderr = getattr(process, "stderr", None)
 
-    def readline(self):
+    def readline(self, timeout: float | None = None):
         if self.stdout is None:
             return ""
+        if timeout is not None and timeout <= 0:
+            return ""
+        if timeout is not None:
+            selector = selectors.DefaultSelector()
+            try:
+                selector.register(self.stdout, selectors.EVENT_READ)
+                if not selector.select(timeout):
+                    return ""
+            finally:
+                selector.close()
         return self.stdout.readline()
 
     def close(self):

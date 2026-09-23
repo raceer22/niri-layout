@@ -67,9 +67,8 @@ class RestoreCLIMinimalTests(unittest.TestCase):
         launched = []
 
         def fake_action(command, **kwargs):
-            tokens = shlex.split(command)
-            action_calls.append(tuple(tokens))
-            return ["niri", "msg", "action", *tokens]
+            action_calls.append(tuple(command[3:]))
+            return {"ok": True}
 
         def fake_launch(command, **kwargs):
             launched.append(tuple(command))
@@ -81,15 +80,16 @@ class RestoreCLIMinimalTests(unittest.TestCase):
             (layout_dir / "demo.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
             with patch("niri_layout.cli.query_niri", side_effect=lambda query: current_outputs if query == "outputs" else []):
-                with patch("niri_layout.restore.niri_action", side_effect=fake_action):
+                with patch("niri_layout.cli.run_niri_action", side_effect=fake_action):
                     with patch("niri_layout.restore.start_event_stream", return_value=FakeStream([
-                        {"kind": "WindowOpenedOrChanged", "app_id": "Alacritty", "id": 42},
+                        {"WindowOpenedOrChanged": {"app_id": "Alacritty", "id": 42}},
                     ])):
                         with patch("niri_layout.restore.launch_process", side_effect=fake_launch):
                             rc = main(["restore", "demo"], env={"HOME": tmpdir})
 
         self.assertEqual(rc, 0)
-        self.assertIn(("new-workspace", "--output", "DP-1"), action_calls)
+        self.assertIn(("focus-monitor", "DP-1"), action_calls)
+        self.assertIn(("focus-workspace-down",), action_calls)
         self.assertEqual(launched[0], ("alacritty",))
 
     def test_restore_command_resolves_missing_window_command_from_desktop_entry(self):

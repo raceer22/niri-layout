@@ -84,7 +84,8 @@ class RestoreSingleWorkspaceTests(unittest.TestCase):
         self.assertEqual([entry["window_id"] for entry in result["placements"]], [10, 20])
         self.assertEqual([entry["window_index"] for entry in result["placements"]], [0, 1])
         self.assertEqual(launched, [("alacritty",), ("firefox",)])
-        self.assertIn(("niri", "msg", "action", "new-workspace", "--output", "DP-1"), actions)
+        self.assertIn(("niri", "msg", "action", "focus-monitor", "DP-1"), actions)
+        self.assertIn(("niri", "msg", "action", "focus-workspace-down"), actions)
 
     def test_restore_layout_ignores_missing_window_events_without_crashing(self):
         snapshot = {

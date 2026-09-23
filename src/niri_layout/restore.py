@@ -116,7 +116,13 @@ def _consume_matching_event(
                         "window": queue_entry.get("window"),
                     }
 
-        line = stream.readline()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            line = stream.readline(timeout=remaining)
+        except TypeError:
+            line = stream.readline()
         if not line:
             if time.monotonic() >= deadline:
                 return None
@@ -136,10 +142,16 @@ def _consume_matching_event(
 
         if not isinstance(event, Mapping):
             continue
-        if event.get("kind") != "WindowOpenedOrChanged":
+        if event.get("kind") == "WindowOpenedOrChanged":
+            window_event = event
+        else:
+            window_event = event.get("WindowOpenedOrChanged")
+        if not isinstance(window_event, Mapping):
             continue
 
-        app_id = event.get("app_id")
+        if isinstance(window_event.get("window"), Mapping):
+            window_event = window_event["window"]
+        app_id = window_event.get("app_id")
         if app_id is None:
             continue
 
@@ -149,7 +161,7 @@ def _consume_matching_event(
                 del pending_by_app_id[app_id]
             return {
                 "status": "ok",
-                "window_id": event.get("id"),
+                "window_id": window_event.get("id"),
                 "app_id": app_id,
                 "name": queue_entry.get("name"),
                 "window": queue_entry.get("window"),
@@ -179,9 +191,7 @@ def restore_single_window(
 
     action_runner = action_runner or (lambda command, **kwargs: None)
     launch_runner = launch_runner or launch_process
-    stream = event_stream
-    if stream is None:
-        stream = start_event_stream()
+    stream = event_stream if event_stream is not None else start_event_stream()
 
     try:
         action_command = niri_action(f"new-workspace --output {output_name}")
@@ -228,9 +238,7 @@ def restore_windows(
 
     action_runner = action_runner or (lambda command, **kwargs: None)
     launch_runner = launch_runner or launch_process
-    stream = event_stream
-    if stream is None:
-        stream = start_event_stream()
+    stream = event_stream if event_stream is not None else start_event_stream()
 
     pending_by_app_id: defaultdict[str, deque] = defaultdict(deque)
     event_buffer: defaultdict[str, deque] = defaultdict(deque)
@@ -284,7 +292,8 @@ def restore_windows(
                 time.sleep(0.01)
         return results
     finally:
-        close_event_stream(stream)
+        if event_stream is None:
+            close_event_stream(stream)
 
 
 def _warning_record(app_id: str | None, output_name: str, workspace_name: str | None, column_index: int | None, message: str, *, exc: Exception | None = None) -> dict[str, Any]:
@@ -364,51 +373,61 @@ def restore_layout(
     if isinstance(focus_target, Mapping):
         focus_target_key = (focus_target.get("column_index"), focus_target.get("window_index"))
 
-    for saved_output in snapshot.get("outputs", []):
-        if not isinstance(saved_output, Mapping):
-            raise ValueError("each saved output must be a mapping")
-        identifier = saved_output.get("identifier", {})
-        if not isinstance(identifier, Mapping):
-            identifier = {}
-        target_output = match_output(identifier, current_outputs)
-        workspaces = saved_output.get("workspaces", [])
-        if not isinstance(workspaces, list):
-            raise ValueError("saved output workspaces must be a list")
-        for workspace in workspaces:
-            if not isinstance(workspace, Mapping):
-                raise ValueError("saved workspace must be a mapping")
-            columns = workspace.get("columns", [])
-            if not isinstance(columns, list):
-                raise ValueError("saved workspace columns must be a list")
-            action_runner(niri_action(f"new-workspace --output {target_output}"), shell=False)
-            placements.extend(
-                restore_columns(
-                    workspace.get("name") or "workspace",
-                    target_output,
-                    columns,
-                    action_runner=action_runner,
-                    launch_runner=launch_runner,
-                    event_stream=event_stream,
-                    timeout=timeout,
-                    warning_sink=lambda record: warnings_list.append(record),
+    owns_event_stream = event_stream is None
+    stream = event_stream if event_stream is not None else start_event_stream()
+    try:
+        for saved_output in snapshot.get("outputs", []):
+            if not isinstance(saved_output, Mapping):
+                raise ValueError("each saved output must be a mapping")
+            identifier = saved_output.get("identifier", {})
+            if not isinstance(identifier, Mapping):
+                identifier = {}
+            target_output = match_output(identifier, current_outputs)
+            workspaces = saved_output.get("workspaces", [])
+            if not isinstance(workspaces, list):
+                raise ValueError("saved output workspaces must be a list")
+            for workspace in workspaces:
+                if not isinstance(workspace, Mapping):
+                    raise ValueError("saved workspace must be a mapping")
+                columns = workspace.get("columns", [])
+                if not isinstance(columns, list):
+                    raise ValueError("saved workspace columns must be a list")
+                action_runner(niri_action(f"focus-monitor {target_output}"), shell=False)
+                action_runner(niri_action("focus-workspace-down"), shell=False)
+                workspace_name = workspace.get("name")
+                if workspace_name:
+                    action_runner(niri_action(["set-workspace-name", str(workspace_name)]), shell=False)
+                placements.extend(
+                    restore_columns(
+                        workspace.get("name") or "workspace",
+                        target_output,
+                        columns,
+                        action_runner=action_runner,
+                        launch_runner=launch_runner,
+                        event_stream=stream,
+                        timeout=timeout,
+                        warning_sink=lambda record: warnings_list.append(record),
+                    )
                 )
-            )
 
-    focus_window_id = None
-    if focus_target_key is not None:
-        target_column, target_window = focus_target_key
-        for placement in placements:
-            if placement.get("status") != "ok":
-                continue
-            if placement.get("column_index") == target_column and placement.get("window_index") == target_window:
-                focus_window_id = placement.get("window_id")
-                break
-        if focus_window_id is not None:
-            action_runner(niri_action(f"focus-window --id {focus_window_id}"), shell=False)
+        focus_window_id = None
+        if focus_target_key is not None:
+            target_column, target_window = focus_target_key
+            for placement in placements:
+                if placement.get("status") != "ok":
+                    continue
+                if placement.get("column_index") == target_column and placement.get("window_index") == target_window:
+                    focus_window_id = placement.get("window_id")
+                    break
+            if focus_window_id is not None:
+                action_runner(niri_action(f"focus-window --id {focus_window_id}"), shell=False)
 
-    return {
-        "status": "ok",
-        "placements": placements,
-        "warnings": warnings_list,
-        "focus_window_id": focus_window_id,
-    }
+        return {
+            "status": "ok",
+            "placements": placements,
+            "warnings": warnings_list,
+            "focus_window_id": focus_window_id,
+        }
+    finally:
+        if owns_event_stream:
+            close_event_stream(stream)
