@@ -1,10 +1,12 @@
 import argparse
+import json
 import os
 import warnings
 from pathlib import Path
 
 from . import NiriLayoutError
 from .ipc import query_niri
+from .restore import build_restore_plan, load_layout
 from .snapshot import normalize_snapshot
 from .storage import save_layout, validate_layout_name
 
@@ -16,16 +18,20 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser = subparsers.add_parser("save", help="save the active layout")
     save_parser.add_argument("name", help="layout name")
     save_parser.add_argument("--all-workspaces", action="store_true", help="save inactive workspaces too")
+
+    restore_parser = subparsers.add_parser("restore", help="plan a layout restore against active outputs")
+    restore_parser.add_argument("name", help="layout name")
+    restore_parser.add_argument("--plan", action="store_true", help="print a restore plan without mutating Niri")
     return parser
 
 
 def main(argv=None, env=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    home_dir = Path((env or os.environ).get("HOME", str(Path.home())))
 
     if args.command == "save":
         validate_layout_name(args.name)
-        home_dir = Path((env or os.environ).get("HOME", str(Path.home())))
         user_app_dir = home_dir / ".local" / "share" / "applications"
         system_app_dir = Path("/usr/share/applications")
         outputs = query_niri("outputs")
@@ -47,6 +53,17 @@ def main(argv=None, env=None):
                         if warning:
                             warnings.warn(f"desktop entry warning for {window.get('app_id')!r}: {warning}")
         save_layout(args.name, payload, home_dir=home_dir)
+        return 0
+
+    if args.command == "restore":
+        validate_layout_name(args.name)
+        snapshot = load_layout(args.name, home_dir=home_dir)
+        current_outputs = query_niri("outputs")
+        current_workspaces = query_niri("workspaces")
+        plan = build_restore_plan(snapshot, current_outputs)
+        if args.plan:
+            print(json.dumps(plan, separators=(", ", ": "), sort_keys=True))
+            return 0
         return 0
 
     raise NiriLayoutError(f"unsupported command: {args.command}")
