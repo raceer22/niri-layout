@@ -4,6 +4,7 @@ from pathlib import Path
 
 from . import NiriLayoutError
 from .ipc import query_niri
+from .snapshot import normalize_snapshot
 from .storage import save_layout, validate_layout_name
 
 
@@ -13,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     save_parser = subparsers.add_parser("save", help="save the active layout")
     save_parser.add_argument("name", help="layout name")
+    save_parser.add_argument("--all-workspaces", action="store_true", help="save inactive workspaces too")
     return parser
 
 
@@ -25,7 +27,14 @@ def main(argv=None, env=None):
         home_dir = Path((env or os.environ).get("HOME", str(Path.home())))
         outputs = query_niri("outputs")
         workspaces = query_niri("workspaces")
-        payload = {"outputs": outputs, "workspaces": workspaces}
+        windows = query_niri("windows")
+        payload = normalize_snapshot(
+            args.name,
+            outputs,
+            workspaces,
+            all_workspaces=args.all_workspaces,
+            windows=windows,
+        )
         save_layout(args.name, payload, home_dir=home_dir)
         return 0
 
