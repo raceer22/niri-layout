@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
+import warnings
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .ipc import close_event_stream, niri_action, start_event_stream
+from .launcher import launch_process
 from .matching import match_output
 from .storage import layout_directory, validate_layout_name
 
@@ -54,3 +58,69 @@ def build_restore_plan(snapshot: Mapping[str, Any], current_outputs: Mapping[str
             "workspace_order": workspace_order,
         })
     return plan
+
+
+def restore_single_window(
+    name: str,
+    output_name: str,
+    window: Mapping[str, Any],
+    *,
+    action_runner=None,
+    launch_runner=None,
+    event_stream=None,
+    timeout: float = 5.0,
+):
+    if not isinstance(window, Mapping):
+        raise ValueError("window must be a mapping")
+
+    app_id = window.get("app_id")
+    command = window.get("command")
+    if app_id is None:
+        raise ValueError("window is missing its app_id")
+    if not command:
+        raise ValueError("window is missing its command")
+
+    action_runner = action_runner or (lambda command, **kwargs: None)
+    launch_runner = launch_runner or launch_process
+    stream = event_stream
+    close_after = True
+
+    if stream is None:
+        stream = start_event_stream()
+        close_after = True
+
+    try:
+        action_command = niri_action(f"new-workspace --output {output_name}")
+        action_runner(action_command, shell=False)
+
+        launch_proc = launch_runner(command, shell=False)
+        if not hasattr(launch_proc, "pid"):
+            raise RuntimeError("process launcher did not return a process with a pid")
+
+        deadline = time.monotonic() + float(timeout)
+        while True:
+            line = stream.readline()
+            if not line:
+                if time.monotonic() >= deadline:
+                    warnings.warn(f"timed out waiting for app_id {app_id!r} on output {output_name!r}")
+                    return {"status": "timeout", "window_id": None, "app_id": app_id, "name": name}
+                time.sleep(0.01)
+                continue
+
+            payload = line.strip()
+            if not payload:
+                continue
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            if event.get("kind") == "WindowOpenedOrChanged" and event.get("app_id") == app_id:
+                return {"status": "ok", "window_id": event.get("id"), "app_id": app_id, "name": name}
+
+            if time.monotonic() >= deadline:
+                warnings.warn(f"timed out waiting for app_id {app_id!r} on output {output_name!r}")
+                return {"status": "timeout", "window_id": None, "app_id": app_id, "name": name}
+    finally:
+        if close_after:
+            close_event_stream(stream)
