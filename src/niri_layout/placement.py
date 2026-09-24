@@ -16,8 +16,8 @@ def _coerce_width(width):
 
 def build_column_actions(column_index, width, mode):
     width_value = _coerce_width(width)
-    grouping_mode = "tabbed" if str(mode or "split") == "tabbed" else "normal"
+    grouping_mode = "tabbed" if str(mode or "split").lower() == "tabbed" else "split"
     return [
         ["niri", "msg", "action", "set-column-width", f"{width_value * 100:g}%"],
-        ["niri", "msg", "action", "set-column-display", grouping_mode],
+        ["niri", "msg", "action", "set-column-mode", grouping_mode],
     ]

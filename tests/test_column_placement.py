@@ -10,7 +10,7 @@ class ColumnPlacementTests(unittest.TestCase):
             actions,
             [
                 ["niri", "msg", "action", "set-column-width", "50%"],
-                ["niri", "msg", "action", "set-column-display", "normal"],
+                ["niri", "msg", "action", "set-column-mode", "split"],
             ],
         )
 
@@ -20,7 +20,7 @@ class ColumnPlacementTests(unittest.TestCase):
             actions,
             [
                 ["niri", "msg", "action", "set-column-width", "75%"],
-                ["niri", "msg", "action", "set-column-display", "tabbed"],
+                ["niri", "msg", "action", "set-column-mode", "tabbed"],
             ],
         )
 

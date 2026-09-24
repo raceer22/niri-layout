@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .desktop import default_desktop_dirs, resolve_desktop_entry
+from .desktop import resolve_desktop_entry
 from .ipc import close_event_stream, niri_action, start_event_stream
 from .launcher import launch_process
 from .matching import match_output
@@ -76,8 +76,11 @@ def _resolve_window_command(window: Mapping[str, Any]) -> dict[str, Any]:
     if command not in (None, "", [], ()):
         return candidate
 
-    user_dirs, system_dirs = default_desktop_dirs()
-    resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
+    resolution = resolve_desktop_entry(
+        str(app_id),
+        user_dirs=[Path.home() / ".local" / "share" / "applications"],
+        system_dirs=[Path("/usr/share/applications")],
+    )
     if resolution.resolved and resolution.command:
         candidate["command"] = list(resolution.command)
         if resolution.desktop_id is not None:
@@ -98,28 +101,26 @@ def _consume_matching_event(
     while True:
         if pending_by_app_id:
             for app_id, queue in list(pending_by_app_id.items()):
-                if queue and app_id in event_buffer and event_buffer[app_id]:
-                    event = event_buffer[app_id].popleft()
-                    if not event_buffer[app_id]:
-                        del event_buffer[app_id]
-                    queue_entry = pending_by_app_id[app_id].popleft()
-                    if not pending_by_app_id[app_id]:
-                        del pending_by_app_id[app_id]
-                    return {
-                        "status": "ok",
-                        "window_id": event.get("id"),
-                        "app_id": app_id,
-                        "name": queue_entry.get("name"),
-                        "window": queue_entry.get("window"),
-                    }
+                if not queue:
+                    continue
+                buffered_events = event_buffer.get(app_id)
+                if not buffered_events:
+                    continue
+                event = buffered_events.popleft()
+                if not buffered_events:
+                    del event_buffer[app_id]
+                queue_entry = pending_by_app_id[app_id].popleft()
+                if not pending_by_app_id[app_id]:
+                    del pending_by_app_id[app_id]
+                return {
+                    "status": "ok",
+                    "window_id": event.get("id"),
+                    "app_id": app_id,
+                    "name": queue_entry.get("name"),
+                    "window": queue_entry.get("window"),
+                }
 
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
-        try:
-            line = stream.readline(timeout=remaining)
-        except TypeError:
-            line = stream.readline()
+        line = stream.readline()
         if not line:
             if time.monotonic() >= deadline:
                 return None
@@ -139,16 +140,10 @@ def _consume_matching_event(
 
         if not isinstance(event, Mapping):
             continue
-        if event.get("kind") == "WindowOpenedOrChanged":
-            window_event = event
-        else:
-            window_event = event.get("WindowOpenedOrChanged")
-        if not isinstance(window_event, Mapping):
+        if event.get("kind") != "WindowOpenedOrChanged":
             continue
 
-        if isinstance(window_event.get("window"), Mapping):
-            window_event = window_event["window"]
-        app_id = window_event.get("app_id")
+        app_id = event.get("app_id")
         if app_id is None:
             continue
 
@@ -158,7 +153,7 @@ def _consume_matching_event(
                 del pending_by_app_id[app_id]
             return {
                 "status": "ok",
-                "window_id": window_event.get("id"),
+                "window_id": event.get("id"),
                 "app_id": app_id,
                 "name": queue_entry.get("name"),
                 "window": queue_entry.get("window"),
@@ -389,11 +384,7 @@ def restore_layout(
                 columns = workspace.get("columns", [])
                 if not isinstance(columns, list):
                     raise ValueError("saved workspace columns must be a list")
-                action_runner(niri_action(f"focus-monitor {target_output}"), shell=False)
-                action_runner(niri_action("focus-workspace-down"), shell=False)
-                workspace_name = workspace.get("name")
-                if workspace_name:
-                    action_runner(niri_action(["set-workspace-name", str(workspace_name)]), shell=False)
+                action_runner(niri_action(f"new-workspace --output {target_output}"), shell=False)
                 placements.extend(
                     restore_columns(
                         workspace.get("name") or "workspace",
