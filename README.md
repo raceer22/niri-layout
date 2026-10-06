@@ -11,3 +11,5 @@ niri-layout export dev-dual ~/.config/niri/scripts/launch-dev.sh
 ```
 
 The export command writes a standalone shell launcher that replicates the actions of the `niri-layout restore` command for the selected layout. The generated script is deterministic, executable, and does not embed project paths or Python dependencies.
+
+Saved Zathura windows retain the document path from the window title, so restoring the layout reopens the document.

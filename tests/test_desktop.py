@@ -142,6 +142,45 @@ class DesktopResolutionTests(unittest.TestCase):
             self.assertEqual(window["desktop_id"], "alacritty.desktop")
             self.assertEqual(window["command"], ["alacritty"])
 
+    def test_snapshot_preserves_zathura_document_from_window_title(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            app_dir = tmpdir / "applications"
+            app_dir.mkdir()
+            (app_dir / "org.pwmt.Zathura.desktop").write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Exec=zathura %U\n",
+                encoding="utf-8",
+            )
+            document = str(tmpdir / "report.pdf")
+            outputs = {"DP-1": {"name": "DP-1"}}
+            workspaces = [{
+                "id": 1,
+                "name": "docs",
+                "output": "DP-1",
+                "is_active": True,
+            }]
+            windows = [{
+                "id": 7,
+                "app_id": "org.pwmt.Zathura",
+                "title": document,
+                "workspace_id": 1,
+                "layout": {"pos_in_scrolling_layout": [1, 1]},
+            }]
+
+            snapshot = normalize_snapshot(
+                "docs",
+                outputs,
+                workspaces,
+                windows=windows,
+                app_dirs=[app_dir],
+            )
+
+            saved_window = snapshot["outputs"][0]["workspaces"][0]["columns"][0]["windows"][0]
+            self.assertEqual(saved_window["desktop_id"], "org.pwmt.Zathura.desktop")
+            self.assertEqual(saved_window["document"], document)
+
 
 if __name__ == "__main__":
     unittest.main()

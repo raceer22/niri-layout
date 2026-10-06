@@ -33,27 +33,36 @@ def _resolve_window_metadata(raw_window: Mapping[str, Any], *, app_dirs: Sequenc
     if raw_window.get("command") is not None:
         window["command"] = raw_window["command"]
 
-    if app_dirs is None:
-        return window
+    if app_dirs is not None:
+        user_dirs = []
+        system_dirs = []
+        for directory in app_dirs:
+            path = Path(directory).expanduser()
+            if path.name == "applications":
+                if user_dirs and path == user_dirs[-1]:
+                    continue
+            if not user_dirs:
+                user_dirs.append(path)
+            else:
+                system_dirs.append(path)
 
-    user_dirs = []
-    system_dirs = []
-    for directory in app_dirs:
-        path = Path(directory).expanduser()
-        if path.name == "applications":
-            if user_dirs and path == user_dirs[-1]:
-                continue
-        if not user_dirs:
-            user_dirs.append(path)
+        resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
+        if resolution.resolved:
+            window["desktop_id"] = resolution.desktop_id
+            window["command"] = resolution.command
+        elif resolution.warning:
+            window["warning"] = resolution.warning
+
+    if "zathura" in str(app_id).casefold() or "zathura" in str(window.get("desktop_id", "")).casefold():
+        title = raw_window.get("title")
+        if isinstance(title, str) and title.strip() and Path(title).is_absolute():
+            window["document"] = title
         else:
-            system_dirs.append(path)
-
-    resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
-    if resolution.resolved:
-        window["desktop_id"] = resolution.desktop_id
-        window["command"] = resolution.command
-    elif resolution.warning:
-        window["warning"] = resolution.warning
+            warning = "could not capture Zathura document path from window title"
+            if window.get("warning"):
+                window["warning"] += f"; {warning}"
+            else:
+                window["warning"] = warning
     return window
 
 

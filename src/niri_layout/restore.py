@@ -73,19 +73,26 @@ def _resolve_window_command(window: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("window is missing its app_id")
 
     command = candidate.get("command")
-    if command not in (None, "", [], ()):
-        return candidate
+    if command in (None, "", [], ()):
+        user_dirs, system_dirs = default_desktop_dirs()
+        resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
+        if resolution.resolved and resolution.command:
+            command = list(resolution.command)
+            candidate["command"] = command
+            if resolution.desktop_id is not None:
+                candidate["desktop_id"] = resolution.desktop_id
+        elif command is None:
+            warnings.warn(f"could not resolve command for app_id {app_id!r}; restore will continue and may fail later")
 
-    user_dirs, system_dirs = default_desktop_dirs()
-    resolution = resolve_desktop_entry(str(app_id), user_dirs=user_dirs, system_dirs=system_dirs)
-    if resolution.resolved and resolution.command:
-        candidate["command"] = list(resolution.command)
-        if resolution.desktop_id is not None:
-            candidate["desktop_id"] = resolution.desktop_id
-        return candidate
-
-    if command is None and app_id is not None:
-        warnings.warn(f"could not resolve command for app_id {app_id!r}; restore will continue and may fail later")
+    document = candidate.get("document")
+    if isinstance(document, str) and document:
+        if command in (None, "", [], ()):
+            warnings.warn(f"could not append document for app_id {app_id!r} because its command is unresolved")
+        else:
+            command_tokens = [command] if isinstance(command, str) else list(command)
+            if document not in command_tokens:
+                command_tokens.append(document)
+            candidate["command"] = command_tokens
     return candidate
 
 

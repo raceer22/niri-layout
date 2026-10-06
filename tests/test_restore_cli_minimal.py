@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from niri_layout.cli import main
+from niri_layout.restore import _resolve_window_command
 
 
 class FakeStream:
@@ -31,6 +32,22 @@ class FakeStream:
 
 
 class RestoreCLIMinimalTests(unittest.TestCase):
+    def test_restore_appends_saved_zathura_document_to_launch_command(self):
+        document = "/home/user/Research notes/article.pdf"
+
+        with patch("niri_layout.restore.resolve_desktop_entry", return_value=SimpleNamespace(
+            resolved=True,
+            desktop_id="org.pwmt.Zathura.desktop",
+            command=["zathura"],
+            warning=None,
+        )):
+            restored_window = _resolve_window_command({
+                "app_id": "org.pwmt.zathura",
+                "document": document,
+            })
+
+        self.assertEqual(restored_window["command"], ["zathura", document])
+
     def test_restore_command_executes_real_restore_flow_for_single_window(self):
         snapshot = {
             "name": "demo",
